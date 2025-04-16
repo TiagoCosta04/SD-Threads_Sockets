@@ -49,24 +49,36 @@ class Program
 
                 if (message.Contains("<|EOM|>"))
                 {
+                    // Remove the terminator and process the aggregated message.
                     message = message.Replace("<|EOM|>", "");
                     Console.WriteLine("[SERVIDOR] Dados recebidos do Agregador");
 
+                    // Optionally, if you need to process each individual JSON,
+                    // you could split the message by newline.
+                    // For now, we only log the single reception message.
                     try
                     {
-                        var doc = JsonDocument.Parse(message);
-                        var id = doc.RootElement.GetProperty("wavy_id").GetString();
-                        var filePath = Path.Combine(basePath, $"registos_{id}.json");
-
-                        lock (fileMutexes)
+                        // Process each individual JSON if needed:
+                        var individualMessages = message.Split('\n');
+                        foreach (var msg in individualMessages)
                         {
-                            if (!fileMutexes.ContainsKey(id))
-                                fileMutexes[id] = new Mutex();
-                        }
+                            if (!string.IsNullOrWhiteSpace(msg))
+                            {
+                                var doc = JsonDocument.Parse(msg);
+                                var id = doc.RootElement.GetProperty("wavy_id").GetString();
+                                var filePath = Path.Combine(basePath, $"registos_{id}.json");
 
-                        fileMutexes[id].WaitOne();
-                        File.AppendAllText(filePath, message + Environment.NewLine);
-                        fileMutexes[id].ReleaseMutex();
+                                lock (fileMutexes)
+                                {
+                                    if (!fileMutexes.ContainsKey(id))
+                                        fileMutexes[id] = new Mutex();
+                                }
+
+                                fileMutexes[id].WaitOne();
+                                File.AppendAllText(filePath, msg + Environment.NewLine);
+                                fileMutexes[id].ReleaseMutex();
+                            }
+                        }
                     }
                     catch (Exception ex)
                     {

@@ -149,12 +149,15 @@ class Program
                     dataToSend.Add(data);
                 }
 
-                SendDataToServer(dataToSend);
+                // Combine all queued messages into one aggregated message.
+                // Using newline separator (adjust if necessary).
+                var aggregatedMessage = string.Join("\n", dataToSend);
+                SendDataToServer(aggregatedMessage);
             }
         }
     }
 
-    static void SendDataToServer(List<string> dataBatch)
+    static void SendDataToServer(string aggregatedData)
     {
         if (serverStream == null || serverClient == null || !serverClient.Connected)
         {
@@ -164,16 +167,14 @@ class Program
 
         try
         {
-            foreach (var data in dataBatch)
-            {
-                var dadosBytes = Encoding.UTF8.GetBytes(data + "<|EOM|>");
-                serverStream.Write(dadosBytes, 0, dadosBytes.Length);
+            var messageToSend = aggregatedData + "<|EOM|>";
+            var dadosBytes = Encoding.UTF8.GetBytes(messageToSend);
+            serverStream.Write(dadosBytes, 0, dadosBytes.Length);
 
-                var ackBuffer = new byte[1024];
-                var ackReceived = serverStream.Read(ackBuffer, 0, ackBuffer.Length);
-                var ack = Encoding.UTF8.GetString(ackBuffer, 0, ackReceived);
-                Console.WriteLine($"[AGREGADOR] Resposta do Servidor: {ack}");
-            }
+            var ackBuffer = new byte[1024];
+            var ackReceived = serverStream.Read(ackBuffer, 0, ackBuffer.Length);
+            var ack = Encoding.UTF8.GetString(ackBuffer, 0, ackReceived);
+            Console.WriteLine($"[AGREGADOR] Resposta do Servidor: {ack}");
         }
         catch (Exception ex)
         {
