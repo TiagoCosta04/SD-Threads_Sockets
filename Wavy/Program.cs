@@ -12,8 +12,8 @@ class Program
 
         Console.WriteLine("[WAVY] Esperando estabelecer conexão com o Agregador...");
 
-        bool ligado = false;
-        while (!ligado)
+        bool conectado = false;
+        while (!conectado)
         {
             try
             {
@@ -38,14 +38,14 @@ class Program
                     var response2 = Encoding.UTF8.GetString(buffer, 0, received);
                     if (response2 == "ACK")
                     {
-                        ligado = true;
+                        conectado = true;
                         Console.WriteLine("[WAVY] Conexão estabelecida com o Agregador.");
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Aguarda um pouco antes de tentar novamente
+                Console.WriteLine($"[WAVY] Erro ao conectar: {ex.Message}");
                 Task.Delay(1000).Wait();
             }
         }
@@ -60,7 +60,7 @@ class Program
             while (!desligar)
             {
                 var comando = Console.ReadLine();
-                if (comando != null && comando.Trim().Equals("DLG", StringComparison.OrdinalIgnoreCase))
+                if (comando != null && comando.Trim().Equals("DLG", System.StringComparison.OrdinalIgnoreCase))
                 {
                     desligar = true;
                     Console.WriteLine("[WAVY] Terminando execução. Esperando resposta do Agregador...");
@@ -92,7 +92,6 @@ class Program
 
             if (segundos % 2 == 0)
             {
-                // Cast the humidity value to double to match the temperature's type
                 double umidade = (double)rnd.Next(0, 100);
                 var sensors = new[]
                 {

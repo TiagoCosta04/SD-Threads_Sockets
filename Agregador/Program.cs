@@ -33,7 +33,7 @@ class Program
         listener.Start();
         Console.WriteLine("[AGREGADOR] A ouvir WAVYs na porta 11001...");
 
-        // Thread para aceitar conexões de WAVYs de forma bloqueante
+        // Aceita conexões de WAVYs de forma bloqueante
         Task.Run(() =>
         {
             while (!encerrarExecucao)
@@ -56,7 +56,7 @@ class Program
         // Task para monitorar comando de desligamento
         Task.Run(() => MonitorarComandoDesligar());
 
-        // Mantém o main thread ativo até o encerramento
+        // Mantém o main thread ativo até encerramento
         while (!encerrarExecucao)
         {
             Thread.Sleep(200);
@@ -78,14 +78,14 @@ class Program
         var received = stream.Read(buffer, 0, buffer.Length);
         var message = Encoding.UTF8.GetString(buffer, 0, received);
 
-        // Processa a mensagem de estabelecimento de conexão
+        // Verifica handshake inicial
         if (message.StartsWith("LIga"))
         {
-            // Responde com OK para que o Wavy prossiga com o envio do ID
+            // Envia OK para sinalizar que o handshake pode prosseguir
             var respostaLiga = Encoding.UTF8.GetBytes("OK");
             stream.Write(respostaLiga, 0, respostaLiga.Length);
 
-            // Aguarda o ID
+            // Aguarda o ID enviado pela Wavy
             received = stream.Read(buffer, 0, buffer.Length);
             message = Encoding.UTF8.GetString(buffer, 0, received);
             if (message.StartsWith("ID:"))
@@ -100,7 +100,7 @@ class Program
                 wavyClient.Close();
                 return;
             }
-            // Após o handshake, o Wavy pode enviar dados normalmente.
+            // Após handshake, o cliente deverá enviar dados usando conexões separadas.
         }
         else if (message.Trim().Equals("DLG"))
         {
@@ -110,10 +110,21 @@ class Program
             wavyClient.Close();
             return;
         }
+        // Se for envio de dados
         else if (!string.IsNullOrEmpty(message) && message.Contains("<|EOM|>"))
         {
             message = message.Replace("<|EOM|>", "");
-            Console.WriteLine($"[AGREGADOR] Mensagem recebida da WAVY: {message}");
+            try
+            {
+                using var jsonDoc = JsonDocument.Parse(message);
+                var wavyId = jsonDoc.RootElement.GetProperty("wavy_id").GetString();
+                Console.WriteLine($"[AGREGADOR] Dados recebidos de {wavyId}");
+            }
+            catch
+            {
+                Console.WriteLine("[AGREGADOR] Dados recebidos de uma mensagem não formatada em JSON.");
+            }
+
             dataQueue.Enqueue(message);
 
             var resposta = Encoding.UTF8.GetBytes("<|OK|>");
@@ -175,7 +186,7 @@ class Program
         while (!encerrarExecucao)
         {
             var comando = Console.ReadLine();
-            if (comando != null && comando.Trim().Equals("DLG", StringComparison.OrdinalIgnoreCase))
+            if (comando != null && comando.Trim().Equals("DLG", System.StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine("[AGREGADOR] Encerrando execução... Aguardando resposta do Servidor...");
 

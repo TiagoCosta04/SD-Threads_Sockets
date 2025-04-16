@@ -50,7 +50,7 @@ class Program
                 if (message.Contains("<|EOM|>"))
                 {
                     message = message.Replace("<|EOM|>", "");
-                    Console.WriteLine($"[SERVIDOR] Dados recebidos: {message}");
+                    Console.WriteLine("[SERVIDOR] Dados recebidos do Agregador");
 
                     try
                     {
