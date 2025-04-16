@@ -150,7 +150,7 @@ class Program
                 }
 
                 // Combine all queued messages into one aggregated message.
-                // Using newline separator (adjust if necessary).
+                // Using newline separator.
                 var aggregatedMessage = string.Join("\n", dataToSend);
                 SendDataToServer(aggregatedMessage);
             }
@@ -167,6 +167,7 @@ class Program
 
         try
         {
+            Console.WriteLine("[AGREGADOR] Enviando dados para o Servidor...");
             var messageToSend = aggregatedData + "<|EOM|>";
             var dadosBytes = Encoding.UTF8.GetBytes(messageToSend);
             serverStream.Write(dadosBytes, 0, dadosBytes.Length);
