@@ -1,6 +1,7 @@
 ﻿using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 class Program
 {
@@ -9,12 +10,9 @@ class Program
         Console.Write("ID da WAVY: ");
         var wavyId = Console.ReadLine();
 
-        // Antes de iniciar o envio de dados, espera o Agregador "ligar" ao Servidor.
-        // Aqui vamos simular com tentativas de conexão para receber "OK" do Agregador
         Console.WriteLine("[WAVY] Esperando estabelecer conexão com o Agregador...");
 
-        // Passo "Liga" para o Agregador
-        var ligado = false;
+        bool ligado = false;
         while (!ligado)
         {
             try
@@ -22,11 +20,10 @@ class Program
                 using var client = new TcpClient("127.0.0.1", 11001);
                 using var stream = client.GetStream();
 
-                // Envia "LIga"
+                // Envia "LIga" para iniciar o handshake
                 var ligaBytes = Encoding.UTF8.GetBytes("LIga");
                 stream.Write(ligaBytes, 0, ligaBytes.Length);
 
-                // Lê resposta "OK"
                 var buffer = new byte[1024];
                 var received = stream.Read(buffer, 0, buffer.Length);
                 var response = Encoding.UTF8.GetString(buffer, 0, received);
@@ -48,16 +45,16 @@ class Program
             }
             catch
             {
-                // Tenta novamente após breve intervalo
-                Thread.Sleep(1000);
+                // Aguarda um pouco antes de tentar novamente
+                Task.Delay(1000).Wait();
             }
         }
 
         var rnd = new Random();
         int segundos = 0;
+        bool desligar = false;
 
-        // Task para monitorar desligamento
-        var desligar = false;
+        // Task para monitorar comando de desligamento; escreva "DLG" para encerrar
         Task.Run(() =>
         {
             while (!desligar)
@@ -67,7 +64,6 @@ class Program
                 {
                     desligar = true;
                     Console.WriteLine("[WAVY] Terminando execução. Esperando resposta do Agregador...");
-                    // Solicitar "Desliga" ao Agregador
                     try
                     {
                         using var client = new TcpClient("127.0.0.1", 11001);
@@ -88,17 +84,17 @@ class Program
             }
         });
 
-        // Loop de envio de dados (lógica atual)
+        // Loop para envio periódico de dados
         while (!desligar)
         {
-            // Gerar dados de temperatura
-            var temperatura = Math.Round(15 + rnd.NextDouble() * 10, 2);
+            double temperatura = Math.Round(15 + rnd.NextDouble() * 10, 2);
             string jsonData;
 
             if (segundos % 2 == 0)
             {
-                var umidade = rnd.Next(0, 100);
-                var sensors = new List<object>
+                // Cast the humidity value to double to match the temperature's type
+                double umidade = (double)rnd.Next(0, 100);
+                var sensors = new[]
                 {
                     new { sensor_type = "temperature", value = temperatura },
                     new { sensor_type = "humidity", value = umidade }
@@ -107,13 +103,13 @@ class Program
                 jsonData = JsonSerializer.Serialize(new
                 {
                     wavy_id = wavyId,
-                    sensors = sensors,
+                    sensors,
                     timestamp = DateTime.Now.ToString("o")
                 });
             }
             else
             {
-                var sensors = new List<object>
+                var sensors = new[]
                 {
                     new { sensor_type = "temperature", value = temperatura }
                 };
@@ -121,13 +117,13 @@ class Program
                 jsonData = JsonSerializer.Serialize(new
                 {
                     wavy_id = wavyId,
-                    sensors = sensors,
+                    sensors,
                     timestamp = DateTime.Now.ToString("o")
                 });
             }
 
-            var message = jsonData + "<|EOM|>";
-            var data = Encoding.UTF8.GetBytes(message);
+            var mensagem = jsonData + "<|EOM|>";
+            var data = Encoding.UTF8.GetBytes(mensagem);
 
             try
             {
@@ -138,7 +134,6 @@ class Program
                 var buffer = new byte[1024];
                 var received = stream.Read(buffer, 0, buffer.Length);
                 var response = Encoding.UTF8.GetString(buffer, 0, received);
-
                 Console.WriteLine($"[WAVY] Resposta do Agregador: {response}");
             }
             catch (Exception ex)

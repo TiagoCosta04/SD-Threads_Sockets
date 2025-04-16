@@ -21,64 +21,69 @@ class Program
         while (true)
         {
             var client = listener.AcceptTcpClient();
+            Console.WriteLine("[SERVIDOR] Conexão estabelecida com o Agregador.");
             new Thread(() => HandleClient(client)).Start();
         }
     }
 
     static void HandleClient(TcpClient client)
     {
-        // Mensagem para indicar conexão recebida (tipo "A estabelecer conexão com o Agregador...")
-        Console.WriteLine("[SERVIDOR] A estabelecer conexão com o Agregador...");
-
         using var stream = client.GetStream();
-        Console.WriteLine("[SERVIDOR] Conexão estabelecida.");
-
-        var buffer = new byte[4096];
-        var received = stream.Read(buffer, 0, buffer.Length);
-        var message = Encoding.UTF8.GetString(buffer, 0, received);
-        message = message.Trim();
-
-        // Se for "Desliga" do Agregador
-        if (message.Equals("Desliga", StringComparison.OrdinalIgnoreCase))
+        while (true)
         {
-            Console.WriteLine("[SERVIDOR] Agregador requisitou desligar.");
-            var okMsg = Encoding.UTF8.GetBytes("<|OK|>");
-            stream.Write(okMsg, 0, okMsg.Length);
-            client.Close();
-            return;
-        }
-
-        // Senão, processa dados com <|EOM|>
-        if (message.Contains("<|EOM|>"))
-        {
-            message = message.Replace("<|EOM|>", "");
-            Console.WriteLine($"[SERVIDOR] Dados recebidos: {message}");
-
             try
             {
-                var doc = JsonDocument.Parse(message);
-                var id = doc.RootElement.GetProperty("wavy_id").GetString();
-                var filePath = Path.Combine(basePath, $"registos_{id}.json");
+                var buffer = new byte[4096];
+                var received = stream.Read(buffer, 0, buffer.Length);
+                if (received == 0) break;
 
-                lock (fileMutexes)
+                var message = Encoding.UTF8.GetString(buffer, 0, received).Trim();
+
+                if (message == "Desliga")
                 {
-                    if (!fileMutexes.ContainsKey(id))
-                        fileMutexes[id] = new Mutex();
+                    Console.WriteLine("[SERVIDOR] Agregador requisitou desligar.");
+                    var okMsg = Encoding.UTF8.GetBytes("<|OK|>");
+                    stream.Write(okMsg, 0, okMsg.Length);
+                    break;
                 }
 
-                fileMutexes[id].WaitOne();
-                File.AppendAllText(filePath, message + Environment.NewLine);
-                fileMutexes[id].ReleaseMutex();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SERVIDOR] Erro ao guardar JSON: {ex.Message}");
-            }
+                if (message.Contains("<|EOM|>"))
+                {
+                    message = message.Replace("<|EOM|>", "");
+                    Console.WriteLine($"[SERVIDOR] Dados recebidos: {message}");
 
-            var ack = Encoding.UTF8.GetBytes("<|ACK|>");
-            stream.Write(ack, 0, ack.Length);
+                    try
+                    {
+                        var doc = JsonDocument.Parse(message);
+                        var id = doc.RootElement.GetProperty("wavy_id").GetString();
+                        var filePath = Path.Combine(basePath, $"registos_{id}.json");
+
+                        lock (fileMutexes)
+                        {
+                            if (!fileMutexes.ContainsKey(id))
+                                fileMutexes[id] = new Mutex();
+                        }
+
+                        fileMutexes[id].WaitOne();
+                        File.AppendAllText(filePath, message + Environment.NewLine);
+                        fileMutexes[id].ReleaseMutex();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[SERVIDOR] Erro ao guardar JSON: {ex.Message}");
+                    }
+
+                    var ack = Encoding.UTF8.GetBytes("<|ACK|>");
+                    stream.Write(ack, 0, ack.Length);
+                }
+            }
+            catch (Exception)
+            {
+                break;
+            }
         }
 
         client.Close();
+        Console.WriteLine("[SERVIDOR] Conexão encerrada.");
     }
 }
