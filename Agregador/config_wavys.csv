@@ -1,0 +1,5 @@
+WAVY_ID,status,data_types,last_sync
+WAVYTEST01,operação,temperature,2025-04-15T23:23:16.0197871+01:00
+WAVYTEST02,operação,temperature,2025-04-07T23:17:11.8278914+01:00
+WAVYTEST03,inativo,desconhecido,nunca
+wavyteste1,operação,tipo1,2025-04-09T15:49:44.6557973+01:00
