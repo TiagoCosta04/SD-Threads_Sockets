@@ -21,7 +21,7 @@ class Program
         while (true)
         {
             var client = listener.AcceptTcpClient();
-            Console.WriteLine("[SERVIDOR] Conexão estabelecida com o Agregador.");
+            Console.WriteLine("[SERVIDOR] Conexão estabelecida com o Agregador.\n");
             new Thread(() => HandleClient(client)).Start();
         }
     }
@@ -29,6 +29,8 @@ class Program
     static void HandleClient(TcpClient client)
     {
         using var stream = client.GetStream();
+        string? agrID = null;
+
         while (true)
         {
             try
@@ -41,7 +43,11 @@ class Program
 
                 if (message == "Desliga")
                 {
-                    Console.WriteLine("[SERVIDOR] {agrID} requisitou desligar.");
+
+                    Console.WriteLine(agrID != null
+                        ? $"[SERVIDOR] {agrID} requisitou desligar"
+                        : "[SERVIDOR] Agregador requisitou desligar");
+                    // Console.WriteLine("[SERVIDOR] {agrID} requisitou desligar.");
                     var okMsg = Encoding.UTF8.GetBytes("<|OK|>");
                     stream.Write(okMsg, 0, okMsg.Length);
                     break;
@@ -49,19 +55,27 @@ class Program
 
                 if (message.Contains("<|EOM|>"))
                 {
-                    // Remove the terminator and process the aggregated message.
                     message = message.Replace("<|EOM|>", "");
-                    // Split the aggregated message into individual JSONs by newline.
+                    // Divide a mensagem agregada e divide em diferentes por cada caracter newline
                     var individualMessages = message.Split('\n').Where(m => !string.IsNullOrWhiteSpace(m)).ToList();
 
-                    // If at least one message exists, try to retrieve the aggregator id from the first message.
                     if (individualMessages.Count > 0)
                     {
                         try
                         {
                             using var jsonDoc = JsonDocument.Parse(individualMessages[0]);
-                            var agrID = jsonDoc.RootElement.GetProperty("agregador_id").GetString();
-                            Console.WriteLine($"[SERVIDOR] Dados recebidos de [{agrID}]");
+                            var idTemp = jsonDoc.RootElement.GetProperty("agregador_id").GetString();
+                            if (!string.IsNullOrEmpty(idTemp))
+                            {
+                                agrID = idTemp;
+
+                                // Quando identificarmos o ID pela primeira vez, podemos avisar o usuário
+                                Console.WriteLine($"[SERVIDOR] Dados recebidos de [{agrID}]");
+                            }
+                            else
+                            {
+                                Console.WriteLine("[SERVIDOR] Dados recebidos do Agregador (ID não identificado).");
+                            }
                         }
                         catch
                         {
@@ -69,7 +83,6 @@ class Program
                         }
                     }
 
-                    // Process each individual JSON message.
                     foreach (var msg in individualMessages)
                     {
                         try

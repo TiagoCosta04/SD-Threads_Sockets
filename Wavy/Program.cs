@@ -9,29 +9,28 @@ using System.Threading.Tasks;
 
 class Program
 {
-    // Paths for configuration files
-    // Agregador configuration
-    static readonly string configAgrPath = Path.GetFullPath(
-        Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory,
-            "..", "..", "..", "..",  // sobe para a raiz do projecto
-            "Config",
-            "config_agr.csv"
-        )
-    );
-    // Wavy configuration
+    // Config da Wavy
     static readonly string configWavyPath = Path.GetFullPath(
         Path.Combine(
             AppDomain.CurrentDomain.BaseDirectory,
-            "..", "..", "..", "..",  // sobe para a raiz do projecto
+            "..", "..", "..", "..",     // sobe para a raiz do projecto
             "Config",
             "config_wavy.csv"
+        )
+    );
+    // Config do Agregador
+    static readonly string configAgrPath = Path.GetFullPath(
+        Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory,
+            "..", "..", "..", "..",
+            "Config",
+            "config_agr.csv"
         )
     );
 
     static void Main()
     {
-        // Loop until a valid, configured and online Wavy ID is provided.
+        // Loop até que um ID válido seja forneciado
         string wavyID = "";
         while (true)
         {
@@ -48,35 +47,34 @@ class Program
                 continue;
             }
 
-            // Check status.
+            // Status
             var status = GetWavyStatus(wavyID);
             if (status == "0")
             {
                 Console.WriteLine($"{wavyID} Offline! Deseja voltar a ligá-la? (y/n) [y]: ");
                 string input = Console.ReadLine()?.Trim().ToLower();
-                // If input is empty or "y", then update status to 1.
+                // Se o input for y ou Enter
                 if (string.IsNullOrEmpty(input) || input == "y")
                 {
                     UpdateWavyStatus(wavyID, "1");
-                    // Also update last_sync to current timestamp.
+                    // Atualiza também o Timestamp
                     UpdateWavyLastSync(wavyID, DateTime.Now);
                     Console.WriteLine($"{wavyID} foi atualizado para Online.");
                 }
                 else
                 {
-                    // Ask for a new ID.
+                    // Volta a pedir o ID
                     continue;
                 }
             }
 
-            // If status is "1", then proceed.
             break;
         }
 
-        // Determine region from wavyID.
+        // Determina a região da wavy
         string wavyRegion = wavyID.Split('_')[0];
 
-        // Read aggregator configuration to determine corresponding aggregator port.
+        // Lê a configuração do agregador para determinar que port se deve conectar
         int aggregatorPort = 0;
         try
         {
@@ -88,13 +86,12 @@ class Program
             var lines = File.ReadAllLines(configAgrPath);
             foreach (var line in lines)
             {
-                // Ignore header line if present.
+                // Ignora linha do header
                 if (line.StartsWith("id", StringComparison.OrdinalIgnoreCase)) continue;
                 var parts = line.Split(',');
                 if (parts.Length >= 2)
                 {
                     var configID = parts[0].Trim();
-                    // Expect aggregator IDs like "N_Agr", "S_Agr", etc.
                     if (configID.StartsWith(wavyRegion + "_", StringComparison.OrdinalIgnoreCase))
                     {
                         if (int.TryParse(parts[1].Trim(), out aggregatorPort) && aggregatorPort > 0)
@@ -118,7 +115,7 @@ class Program
 
         Console.WriteLine($"[{wavyID}] Tentando conectar ao Agregador da região {wavyRegion} na porta {aggregatorPort}...");
 
-        // Attempt to establish handshake with the aggregator on the designated port.
+        // Tenta estabelecer conexão com o Agregador
         bool conectado = false;
         while (!conectado)
         {
@@ -128,7 +125,7 @@ class Program
                 using (var stream = client.GetStream())
                 {
                     // Send handshake initiation.
-                    var ligaBytes = Encoding.UTF8.GetBytes("LIga");
+                    var ligaBytes = Encoding.UTF8.GetBytes("Liga");
                     stream.Write(ligaBytes, 0, ligaBytes.Length);
 
                     var buffer = new byte[1024];
@@ -146,26 +143,26 @@ class Program
                         if (response2 == "ACK")
                         {
                             conectado = true;
-                            Console.WriteLine($"[WAVY {wavyID}] Conexão estabelecida com o Agregador.");
+                            Console.WriteLine($"[{wavyID}] Conexão estabelecida com o Agregador.");
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[WAVY {wavyID}] Erro ao conectar: {ex.Message}");
+                Console.WriteLine($"[{wavyID}] Erro ao conectar: {ex.Message}");
                 Thread.Sleep(1000);
             }
         }
 
-        // Task to send data periodically to the aggregator.
+        // Manda os dados periodicamente
         Task.Run(() =>
         {
             var rnd = new Random();
             int segundos = 0;
             bool desligar = false;
 
-            // Monitor shutdown command in a separate thread.
+            // Verifica pelo comando para desligar numa thread em separado
             Task.Run(() =>
             {
                 while (!desligar)
@@ -174,7 +171,7 @@ class Program
                     if (comando != null && comando.Trim().Equals("DLG", StringComparison.OrdinalIgnoreCase))
                     {
                         desligar = true;
-                        Console.WriteLine($"[WAVY {wavyID}] Terminando execução. Enviando pedido de desligamento...");
+                        Console.WriteLine($"[{wavyID}] Terminando execução. Enviando pedido de desligamento...");
                         try
                         {
                             using (var client = new TcpClient("127.0.0.1", aggregatorPort))
@@ -186,12 +183,12 @@ class Program
                                 var buffer = new byte[1024];
                                 int received = stream.Read(buffer, 0, buffer.Length);
                                 var response = Encoding.UTF8.GetString(buffer, 0, received);
-                                Console.WriteLine($"[WAVY {wavyID}] Resposta do Agregador: {response}");
+                                Console.WriteLine($"[{wavyID}] Resposta do Agregador: {response}");
                             }
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"[WAVY {wavyID}] Erro ao enviar desligamento: {ex.Message}");
+                            Console.WriteLine($"[{wavyID}] Erro ao enviar desligamento: {ex.Message}");
                         }
                     }
                 }
@@ -243,25 +240,24 @@ class Program
                         var buffer = new byte[1024];
                         int received = stream.Read(buffer, 0, buffer.Length);
                         var response = Encoding.UTF8.GetString(buffer, 0, received);
-                        Console.WriteLine($"[WAVY {wavyID}] Resposta do Agregador: {response}");
-                        // Upon successful sync, update last_sync in the config.
+                        Console.WriteLine($"[{wavyID}] Resposta do Agregador: {response}");
                         UpdateWavyLastSync(wavyID, DateTime.Now);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[WAVY {wavyID}] Erro ao enviar dados: {ex.Message}");
+                    Console.WriteLine($"[{wavyID}] Erro ao enviar dados: {ex.Message}");
                 }
 
                 Thread.Sleep(1000);
                 segundos++;
             }
 
-            Console.WriteLine($"[WAVY {wavyID}] Encerrando execução.");
+            Console.WriteLine($"[{wavyID}] Encerrando execução.");
         }).Wait();
     }
 
-    // Checks if the wavyID exists in the config file.
+    // Verifica se a wavy é configurada
     static bool IsWavyConfigured(string wavyID)
     {
         try
@@ -284,7 +280,7 @@ class Program
         return false;
     }
 
-    // Gets the status ("1" online or "0" offline) of the Wavy in the config file.
+    // Pega no status da wavy 0/1
     static string GetWavyStatus(string wavyID)
     {
         try
@@ -304,7 +300,7 @@ class Program
         return "0";
     }
 
-    // Updates the status of a given Wavy in the configuration file.
+    // Dá update no status da wavy
     static void UpdateWavyStatus(string wavyID, string newStatus)
     {
         try
@@ -328,7 +324,7 @@ class Program
         }
     }
 
-    // Updates the last_sync field for the given Wavy.
+    // Dá update no timestamp da wavy
     static void UpdateWavyLastSync(string wavyID, DateTime timestamp)
     {
         try
