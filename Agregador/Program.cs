@@ -3,35 +3,96 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
 class Program
 {
-    static readonly string configDadosPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\config_dados.csv");
+    // Caminho para o ficheiro de Config
+    static readonly string configAgrPath = Path.GetFullPath(
+    Path.Combine(
+        AppDomain.CurrentDomain.BaseDirectory,
+        "..", "..", "..", "..",    // sobe até à raiz do projecto
+        "Config",            // desce para a pasta Config
+        "config_agr.csv"     // nome do ficheiro
+    )
+);
+
+
+
     static readonly ConcurrentQueue<string> dataQueue = new();
     static TcpClient? serverClient;
     static NetworkStream? serverStream;
     static volatile bool encerrarExecucao = false;
 
+    static string aggregatorID = "";
+    static string aggregatorRegion = "";
+    static int aggregatorPort = 0; // Listening port for incoming Wavy connections
+
     static void Main()
     {
-        Console.WriteLine("[AGREGADOR] A estabelecer conexão com o Servidor...");
+        // Prompt para o Agregador (e.g., "N_Agr", "S_Agr", "E_Agr", or "W_Agr").
+        Console.Write("ID do Agregador: ");
+        aggregatorID = Console.ReadLine()?.Trim() ?? "";
+        if (string.IsNullOrEmpty(aggregatorID) || !aggregatorID.Contains('_'))
+        {
+            Console.WriteLine("ID inválido. O ID deve estar no formato <Região>_Agr (exemplo: N_Agr).");
+            return;
+        }
+        aggregatorRegion = aggregatorID.Split('_')[0];
+
+        // Read CSV configuration to get the listening port for this aggregator.
+        if (!File.Exists(configAgrPath))
+        {
+            Console.WriteLine("Arquivo de configuração não encontrado: " + configAgrPath);
+            return;
+        }
+        try
+        {
+            var lines = File.ReadAllLines(configAgrPath);
+            foreach (var line in lines)
+            {
+                var parts = line.Split(',');
+                if (parts.Length >= 2 && parts[0].Trim().Equals(aggregatorID, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!int.TryParse(parts[1].Trim(), out aggregatorPort) || aggregatorPort <= 0)
+                    {
+                        Console.WriteLine("Porta inválida configurada para " + aggregatorID);
+                        return;
+                    }
+                    break;
+                }
+            }
+            if (aggregatorPort <= 0)
+            {
+                Console.WriteLine($"Configuração para agregador {aggregatorID} não encontrada ou porta inválida.");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Erro ao ler o arquivo de configuração: " + ex.Message);
+            return;
+        }
+
+        Console.WriteLine($"[AGREGADOR {aggregatorID}] Utilizando a porta {aggregatorPort} conforme arquivo de configuração.");
+        Console.WriteLine($"[AGREGADOR {aggregatorID}] A estabelecer conexão com o Servidor...");
 
         try
         {
             serverClient = new TcpClient("127.0.0.1", 11000);
             serverStream = serverClient.GetStream();
-            Console.WriteLine("[AGREGADOR] Conexão estabelecida com o Servidor.");
+            Console.WriteLine($"[AGREGADOR {aggregatorID}] Conexão estabelecida com o Servidor.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AGREGADOR] Erro ao conectar ao Servidor: {ex.Message}");
+            Console.WriteLine($"[AGREGADOR {aggregatorID}] Erro ao conectar ao Servidor: {ex.Message}");
             return;
         }
 
-        var listener = new TcpListener(IPAddress.Any, 11001);
+        var listener = new TcpListener(IPAddress.Any, aggregatorPort);
         listener.Start();
-        Console.WriteLine("[AGREGADOR] A ouvir WAVYs na porta 11001...");
+        Console.WriteLine($"[AGREGADOR {aggregatorID}] A ouvir WAVYs na porta {aggregatorPort}...");
 
         // Aceita conexões de WAVYs de forma bloqueante
         Task.Run(() =>
@@ -45,7 +106,7 @@ class Program
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[AGREGADOR] Erro ao aceitar conexão de WAVY: {ex.Message}");
+                    Console.WriteLine($"[AGREGADOR {aggregatorID}] Erro ao aceitar conexão de WAVY: {ex.Message}");
                 }
             }
         });
@@ -62,13 +123,13 @@ class Program
             Thread.Sleep(200);
         }
 
-        Console.WriteLine("[AGREGADOR] Encerrando execução...");
+        Console.WriteLine($"[AGREGADOR {aggregatorID}] Encerrando execução...");
         listener.Stop();
 
         // Fecha a conexão com o Servidor
         serverStream?.Close();
         serverClient?.Close();
-        Console.WriteLine("[AGREGADOR] Conexão com o Servidor encerrada.");
+        Console.WriteLine($"[AGREGADOR {aggregatorID}] Conexão com o Servidor encerrada.");
     }
 
     static void HandleWavy(TcpClient wavyClient)
@@ -81,7 +142,7 @@ class Program
         // Verifica handshake inicial
         if (message.StartsWith("LIga"))
         {
-            // Envia OK para sinalizar que o handshake pode prosseguir
+            // Envia "OK" para prosseguir com o handshake
             var respostaLiga = Encoding.UTF8.GetBytes("OK");
             stream.Write(respostaLiga, 0, respostaLiga.Length);
 
@@ -90,8 +151,15 @@ class Program
             message = Encoding.UTF8.GetString(buffer, 0, received);
             if (message.StartsWith("ID:"))
             {
-                var wavyId = message.Replace("ID:", "").Trim();
-                Console.WriteLine($"[AGREGADOR] Conexão estabelecida com {wavyId}");
+                var wavyID = message.Replace("ID:", "").Trim();
+                // Verifica se a região da Wavy (prefixo) corresponde à do Agregador.
+                if (!wavyID.Contains('_') || wavyID.Split('_')[0] != aggregatorRegion)
+                {
+                    Console.WriteLine($"[AGREGADOR {aggregatorID}] Wavy de ID {wavyID} tem região incompatível e será rejeitada.");
+                    wavyClient.Close();
+                    return;
+                }
+                Console.WriteLine($"[AGREGADOR {aggregatorID}] Conexão estabelecida com {wavyID}");
                 var ack = Encoding.UTF8.GetBytes("ACK");
                 stream.Write(ack, 0, ack.Length);
             }
@@ -100,11 +168,11 @@ class Program
                 wavyClient.Close();
                 return;
             }
-            // Após handshake, o cliente deverá enviar dados usando conexões separadas.
+            // Após handshake, a Wavy enviará dados usando conexões separadas.
         }
         else if (message.Trim().Equals("DLG"))
         {
-            Console.WriteLine("[AGREGADOR] Requisição de desligamento recebida da WAVY.");
+            Console.WriteLine($"[AGREGADOR {aggregatorID}] Requisição de desligamento recebida da WAVY.");
             var resposta = Encoding.UTF8.GetBytes("<|OK|>");
             stream.Write(resposta, 0, resposta.Length);
             wavyClient.Close();
@@ -118,11 +186,11 @@ class Program
             {
                 using var jsonDoc = JsonDocument.Parse(message);
                 var wavyId = jsonDoc.RootElement.GetProperty("wavy_id").GetString();
-                Console.WriteLine($"[AGREGADOR] Dados recebidos de {wavyId}");
+                Console.WriteLine($"[AGREGADOR {aggregatorID}] Dados recebidos de {wavyId}");
             }
             catch
             {
-                Console.WriteLine("[AGREGADOR] Dados recebidos de uma mensagem não formatada em JSON.");
+                Console.WriteLine($"[AGREGADOR {aggregatorID}] Dados recebidos de uma mensagem não formatada em JSON.");
             }
 
             dataQueue.Enqueue(message);
@@ -142,16 +210,32 @@ class Program
 
             if (!dataQueue.IsEmpty)
             {
-                var dataToSend = new List<string>();
+                var modifiedMessages = new List<string>();
 
                 while (dataQueue.TryDequeue(out var data))
                 {
-                    dataToSend.Add(data);
+                    try
+                    {
+                        // Parse each message and insert the agregador_id.
+                        var jsonNode = JsonNode.Parse(data);
+                        if (jsonNode is JsonObject obj)
+                        {
+                            obj["agregador_id"] = aggregatorID;
+                            modifiedMessages.Add(obj.ToJsonString());
+                        }
+                        else
+                        {
+                            modifiedMessages.Add(data); // fallback
+                        }
+                    }
+                    catch
+                    {
+                        modifiedMessages.Add(data); // caso falhe o parse, envia como está
+                    }
                 }
 
-                // Combine all queued messages into one aggregated message.
-                // Using newline separator.
-                var aggregatedMessage = string.Join("\n", dataToSend);
+                // Agrega todas as mensagens em uma única mensagem.
+                var aggregatedMessage = string.Join("\n", modifiedMessages);
                 SendDataToServer(aggregatedMessage);
             }
         }
@@ -161,13 +245,13 @@ class Program
     {
         if (serverStream == null || serverClient == null || !serverClient.Connected)
         {
-            Console.WriteLine("[AGREGADOR] Conexão com o Servidor não está ativa.");
+            Console.WriteLine($"[AGREGADOR {aggregatorID}] Conexão com o Servidor não está ativa.");
             return;
         }
 
         try
         {
-            Console.WriteLine("[AGREGADOR] Enviando dados para o Servidor...");
+            Console.WriteLine($"[AGREGADOR {aggregatorID}] Enviando dados para o Servidor...");
             var messageToSend = aggregatedData + "<|EOM|>";
             var dadosBytes = Encoding.UTF8.GetBytes(messageToSend);
             serverStream.Write(dadosBytes, 0, dadosBytes.Length);
@@ -175,11 +259,11 @@ class Program
             var ackBuffer = new byte[1024];
             var ackReceived = serverStream.Read(ackBuffer, 0, ackBuffer.Length);
             var ack = Encoding.UTF8.GetString(ackBuffer, 0, ackReceived);
-            Console.WriteLine($"[AGREGADOR] Resposta do Servidor: {ack}");
+            Console.WriteLine($"[AGREGADOR {aggregatorID}] Resposta do Servidor: {ack}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AGREGADOR] Erro ao enviar dados para o Servidor: {ex.Message}");
+            Console.WriteLine($"[AGREGADOR {aggregatorID}] Erro ao enviar dados para o Servidor: {ex.Message}");
         }
     }
 
@@ -190,8 +274,7 @@ class Program
             var comando = Console.ReadLine();
             if (comando != null && comando.Trim().Equals("DLG", System.StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("[AGREGADOR] Encerrando execução... Aguardando resposta do Servidor...");
-
+                Console.WriteLine($"[AGREGADOR {aggregatorID}] Encerrando execução... Aguardando resposta do Servidor...");
                 try
                 {
                     if (serverStream != null && serverClient != null && serverClient.Connected)
@@ -202,12 +285,12 @@ class Program
                         var ackBuffer = new byte[1024];
                         var ackReceived = serverStream.Read(ackBuffer, 0, ackBuffer.Length);
                         var ack = Encoding.UTF8.GetString(ackBuffer, 0, ackReceived);
-                        Console.WriteLine($"[AGREGADOR] Resposta do Servidor: {ack}");
+                        Console.WriteLine($"[AGREGADOR {aggregatorID}] Resposta do Servidor: {ack}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[AGREGADOR] Erro ao enviar desligamento ao Servidor: {ex.Message}");
+                    Console.WriteLine($"[AGREGADOR {aggregatorID}] Erro ao enviar desligamento ao Servidor: {ex.Message}");
                 }
 
                 encerrarExecucao = true;
