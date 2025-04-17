@@ -21,7 +21,7 @@ class Program
         while (true)
         {
             var client = listener.AcceptTcpClient();
-            Console.WriteLine("[SERVIDOR] Conexão estabelecida com o Agregador.");
+            Console.WriteLine("[SERVIDOR] Conexão estabelecida com o Agregador.\n");
             new Thread(() => HandleClient(client)).Start();
         }
     }
@@ -49,12 +49,10 @@ class Program
 
                 if (message.Contains("<|EOM|>"))
                 {
-                    // Remove the terminator and process the aggregated message.
                     message = message.Replace("<|EOM|>", "");
-                    // Split the aggregated message into individual JSONs by newline.
+                    // Divide a mensagem agregada e divide em diferentes por cada caracter newline
                     var individualMessages = message.Split('\n').Where(m => !string.IsNullOrWhiteSpace(m)).ToList();
 
-                    // If at least one message exists, try to retrieve the aggregator id from the first message.
                     if (individualMessages.Count > 0)
                     {
                         try
@@ -69,7 +67,6 @@ class Program
                         }
                     }
 
-                    // Process each individual JSON message.
                     foreach (var msg in individualMessages)
                     {
                         try
