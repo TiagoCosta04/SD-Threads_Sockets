@@ -51,38 +51,47 @@ class Program
                 {
                     // Remove the terminator and process the aggregated message.
                     message = message.Replace("<|EOM|>", "");
-                    Console.WriteLine("[SERVIDOR] Dados recebidos do Agregador");
+                    // Split the aggregated message into individual JSONs by newline.
+                    var individualMessages = message.Split('\n').Where(m => !string.IsNullOrWhiteSpace(m)).ToList();
 
-                    // Optionally, if you need to process each individual JSON,
-                    // you could split the message by newline.
-                    // For now, we only log the single reception message.
-                    try
+                    // If at least one message exists, try to retrieve the aggregator id from the first message.
+                    if (individualMessages.Count > 0)
                     {
-                        // Process each individual JSON if needed:
-                        var individualMessages = message.Split('\n');
-                        foreach (var msg in individualMessages)
+                        try
                         {
-                            if (!string.IsNullOrWhiteSpace(msg))
-                            {
-                                var doc = JsonDocument.Parse(msg);
-                                var id = doc.RootElement.GetProperty("wavy_id").GetString();
-                                var filePath = Path.Combine(basePath, $"registos_{id}.json");
-
-                                lock (fileMutexes)
-                                {
-                                    if (!fileMutexes.ContainsKey(id))
-                                        fileMutexes[id] = new Mutex();
-                                }
-
-                                fileMutexes[id].WaitOne();
-                                File.AppendAllText(filePath, msg + Environment.NewLine);
-                                fileMutexes[id].ReleaseMutex();
-                            }
+                            using var jsonDoc = JsonDocument.Parse(individualMessages[0]);
+                            var agrID = jsonDoc.RootElement.GetProperty("agregador_id").GetString();
+                            Console.WriteLine($"[SERVIDOR] Dados recebidos do Agregador {agrID}");
+                        }
+                        catch
+                        {
+                            Console.WriteLine("[SERVIDOR] Dados recebidos do Agregador (ID não identificado)");
                         }
                     }
-                    catch (Exception ex)
+
+                    // Process each individual JSON message.
+                    foreach (var msg in individualMessages)
                     {
-                        Console.WriteLine($"[SERVIDOR] Erro ao guardar JSON: {ex.Message}");
+                        try
+                        {
+                            var doc = JsonDocument.Parse(msg);
+                            var id = doc.RootElement.GetProperty("wavy_id").GetString();
+                            var filePath = Path.Combine(basePath, $"registos_{id}.json");
+
+                            lock (fileMutexes)
+                            {
+                                if (!fileMutexes.ContainsKey(id))
+                                    fileMutexes[id] = new Mutex();
+                            }
+
+                            fileMutexes[id].WaitOne();
+                            File.AppendAllText(filePath, msg + Environment.NewLine);
+                            fileMutexes[id].ReleaseMutex();
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[SERVIDOR] Erro ao guardar JSON: {ex.Message}");
+                        }
                     }
 
                     var ack = Encoding.UTF8.GetBytes("<|ACK|>");

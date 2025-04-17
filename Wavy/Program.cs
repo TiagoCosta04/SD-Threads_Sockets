@@ -21,7 +21,7 @@ class Program
                 using var stream = client.GetStream();
 
                 // Envia "LIga" para iniciar o handshake
-                var ligaBytes = Encoding.UTF8.GetBytes("LIga");
+                var ligaBytes = Encoding.UTF8.GetBytes("Liga");
                 stream.Write(ligaBytes, 0, ligaBytes.Length);
 
                 var buffer = new byte[1024];
