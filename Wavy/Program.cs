@@ -116,7 +116,7 @@ class Program
             return;
         }
 
-        Console.WriteLine($"[WAVY {wavyID}] Tentando conectar ao Agregador da região {wavyRegion} na porta {aggregatorPort}...");
+        Console.WriteLine($"[{wavyID}] Tentando conectar ao Agregador da região {wavyRegion} na porta {aggregatorPort}...");
 
         // Attempt to establish handshake with the aggregator on the designated port.
         bool conectado = false;

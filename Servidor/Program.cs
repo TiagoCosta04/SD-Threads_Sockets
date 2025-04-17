@@ -41,7 +41,7 @@ class Program
 
                 if (message == "Desliga")
                 {
-                    Console.WriteLine("[SERVIDOR] Agregador requisitou desligar.");
+                    Console.WriteLine("[SERVIDOR] {agrID} requisitou desligar.");
                     var okMsg = Encoding.UTF8.GetBytes("<|OK|>");
                     stream.Write(okMsg, 0, okMsg.Length);
                     break;
@@ -61,7 +61,7 @@ class Program
                         {
                             using var jsonDoc = JsonDocument.Parse(individualMessages[0]);
                             var agrID = jsonDoc.RootElement.GetProperty("agregador_id").GetString();
-                            Console.WriteLine($"[SERVIDOR] Dados recebidos do Agregador {agrID}");
+                            Console.WriteLine($"[SERVIDOR] Dados recebidos de [{agrID}]");
                         }
                         catch
                         {
