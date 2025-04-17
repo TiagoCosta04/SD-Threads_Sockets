@@ -8,8 +8,18 @@ using System.Threading.Tasks;
 
 class Program
 {
-    // Path to the aggregator configuration CSV. Ensure the file exists.
-    static readonly string configDadosPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\config_agr.csv");
+    // Caminho para o ficheiro de Config
+    static readonly string configAgrPath = Path.GetFullPath(
+    Path.Combine(
+        AppDomain.CurrentDomain.BaseDirectory,
+        "..", "..", "..", "..",    // sobe até à raiz do projecto
+        "Config",            // desce para a pasta Config
+        "config_agr.csv"     // nome do ficheiro
+    )
+);
+
+
+
     static readonly ConcurrentQueue<string> dataQueue = new();
     static TcpClient? serverClient;
     static NetworkStream? serverStream;
@@ -21,7 +31,7 @@ class Program
 
     static void Main()
     {
-        // Prompt for Aggregador ID (e.g., "N_Agr", "S_Agr", "E_Agr", or "W_Agr").
+        // Prompt para o Agregador (e.g., "N_Agr", "S_Agr", "E_Agr", or "W_Agr").
         Console.Write("ID do Agregador: ");
         aggregatorID = Console.ReadLine()?.Trim() ?? "";
         if (string.IsNullOrEmpty(aggregatorID) || !aggregatorID.Contains('_'))
@@ -32,14 +42,14 @@ class Program
         aggregatorRegion = aggregatorID.Split('_')[0];
 
         // Read CSV configuration to get the listening port for this aggregator.
-        if (!File.Exists(configDadosPath))
+        if (!File.Exists(configAgrPath))
         {
-            Console.WriteLine("Arquivo de configuração não encontrado: " + configDadosPath);
+            Console.WriteLine("Arquivo de configuração não encontrado: " + configAgrPath);
             return;
         }
         try
         {
-            var lines = File.ReadAllLines(configDadosPath);
+            var lines = File.ReadAllLines(configAgrPath);
             foreach (var line in lines)
             {
                 var parts = line.Split(',');
