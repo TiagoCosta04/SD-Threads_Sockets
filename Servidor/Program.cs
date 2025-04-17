@@ -29,6 +29,8 @@ class Program
     static void HandleClient(TcpClient client)
     {
         using var stream = client.GetStream();
+        string? agrID = null;
+
         while (true)
         {
             try
@@ -41,7 +43,11 @@ class Program
 
                 if (message == "Desliga")
                 {
-                    Console.WriteLine("[SERVIDOR] {agrID} requisitou desligar.");
+
+                    Console.WriteLine(agrID != null
+                        ? $"[SERVIDOR] {agrID} requisitou desligar"
+                        : "[SERVIDOR] Agregador requisitou desligar");
+                    // Console.WriteLine("[SERVIDOR] {agrID} requisitou desligar.");
                     var okMsg = Encoding.UTF8.GetBytes("<|OK|>");
                     stream.Write(okMsg, 0, okMsg.Length);
                     break;
@@ -58,8 +64,18 @@ class Program
                         try
                         {
                             using var jsonDoc = JsonDocument.Parse(individualMessages[0]);
-                            var agrID = jsonDoc.RootElement.GetProperty("agregador_id").GetString();
-                            Console.WriteLine($"[SERVIDOR] Dados recebidos de [{agrID}]");
+                            var idTemp = jsonDoc.RootElement.GetProperty("agregador_id").GetString();
+                            if (!string.IsNullOrEmpty(idTemp))
+                            {
+                                agrID = idTemp;
+
+                                // Quando identificarmos o ID pela primeira vez, podemos avisar o usuário
+                                Console.WriteLine($"[SERVIDOR] Dados recebidos de [{agrID}]");
+                            }
+                            else
+                            {
+                                Console.WriteLine("[SERVIDOR] Dados recebidos do Agregador (ID não identificado).");
+                            }
                         }
                         catch
                         {

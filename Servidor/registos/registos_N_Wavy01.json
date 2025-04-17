@@ -733,3 +733,16 @@
 {"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":24.63}],"timestamp":"2025-04-17T20:00:35.1353191\u002B01:00","agregador_id":"N_Agr"}
 {"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":19.13},{"type":"humidity","value":57}],"timestamp":"2025-04-17T20:00:36.1456882\u002B01:00","agregador_id":"N_Agr"}
 {"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":15.79}],"timestamp":"2025-04-17T20:00:37.1603438\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":20.15},{"type":"humidity","value":47}],"timestamp":"2025-04-17T20:36:28.8514847\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":19.01}],"timestamp":"2025-04-17T20:36:29.9395368\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":22.88},{"type":"humidity","value":93}],"timestamp":"2025-04-17T20:36:30.9526875\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":17.48}],"timestamp":"2025-04-17T20:36:31.9713332\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":23.37},{"type":"humidity","value":37}],"timestamp":"2025-04-17T20:36:32.9832372\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":23.66}],"timestamp":"2025-04-17T20:36:33.9951821\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":16.86},{"type":"humidity","value":86}],"timestamp":"2025-04-17T20:36:35.0062247\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":21.49}],"timestamp":"2025-04-17T20:36:36.0201958\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":20.95},{"type":"humidity","value":30}],"timestamp":"2025-04-17T20:36:37.0294568\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":15.22}],"timestamp":"2025-04-17T20:36:38.0457887\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":21.43},{"type":"humidity","value":43}],"timestamp":"2025-04-17T20:36:39.0569780\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":16.24}],"timestamp":"2025-04-17T20:36:40.0691867\u002B01:00","agregador_id":"N_Agr"}
+{"wavy_id":"N_Wavy01","sensors":[{"type":"temperature","value":23.62},{"type":"humidity","value":67}],"timestamp":"2025-04-17T20:36:41.0824922\u002B01:00","agregador_id":"N_Agr"}
