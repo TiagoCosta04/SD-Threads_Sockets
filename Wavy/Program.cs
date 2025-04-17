@@ -164,8 +164,8 @@ class Program
                     double umidade = rnd.Next(0, 100);
                     var sensors = new[]
                     {
-                        new { sensor_type = "temperature", value = temperatura },
-                        new { sensor_type = "humidity", value = umidade }
+                        new { type = "temperature", value = temperatura },
+                        new { type = "humidity", value = umidade }
                     };
 
                     jsonData = JsonSerializer.Serialize(new
@@ -179,7 +179,7 @@ class Program
                 {
                     var sensors = new[]
                     {
-                        new { sensor_type = "temperature", value = temperatura }
+                        new { type = "temperature", value = temperatura }
                     };
 
                     jsonData = JsonSerializer.Serialize(new
