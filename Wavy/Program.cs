@@ -1,11 +1,11 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
-using System.Net.Sockets;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Shared.Models;
+using Shared.RabbitMQ;
 
 class Program
 {
@@ -18,20 +18,16 @@ class Program
             "config_wavy.csv"
         )
     );
-    // Config do Agregador
-    static readonly string configAgrPath = Path.GetFullPath(
-        Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory,
-            "..", "..", "..", "..",
-            "Config",
-            "config_agr.csv"
-        )
-    );
 
-    static void Main()
+    static RabbitMQRpcClient? rpcClient;
+    static string wavyID = "";
+    static string wavyRegion = "";
+    static string rpcQueueName = "";
+    static volatile bool encerrarExecucao = false;
+
+    static async Task Main()
     {
-        // Loop até que um ID válido seja forneciado
-        string wavyID = "";
+        // Loop até que um ID válido seja fornecido
         while (true)
         {
             Console.Write("ID da Wavy: ");
@@ -72,189 +68,179 @@ class Program
         }
 
         // Determina a região da wavy
-        string wavyRegion = wavyID.Split('_')[0];
+        wavyRegion = wavyID.Split('_')[0];
+        rpcQueueName = RabbitMQConfig.RPC_QUEUE_PREFIX + wavyRegion;
 
-        // Lê a configuração do agregador para determinar que port se deve conectar
-        int aggregatorPort = 0;
+        Console.WriteLine($"[{wavyID}] Inicializando RabbitMQ RPC Client...");
+
         try
         {
-            if (!File.Exists(configAgrPath))
+            rpcClient = new RabbitMQRpcClient();
+            Console.WriteLine($"[{wavyID}] RabbitMQ configurado com sucesso.");
+            Console.WriteLine($"[{wavyID}] RPC Queue: {rpcQueueName}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{wavyID}] Erro ao configurar RabbitMQ: {ex.Message}");
+            return;
+        }
+
+        // Estabelece handshake com o Agregador
+        bool conectado = await EstabelecerHandshake();
+        if (!conectado)
+        {
+            Console.WriteLine($"[{wavyID}] Falha ao estabelecer conexão com o Agregador.");
+            return;
+        }
+
+        Console.WriteLine($"[{wavyID}] Conexão estabelecida com o Agregador via RabbitMQ RPC.");
+
+        // Inicia o envio de dados
+        var dataTask = Task.Run(async () => await EnviarDadosPeriodicamente());
+
+        // Monitorar comando de desligamento
+        var shutdownTask = Task.Run(async () => await MonitorarComandoDesligar());
+
+        // Aguarda até que uma das tarefas complete
+        await Task.WhenAny(dataTask, shutdownTask);
+
+        Console.WriteLine($"[{wavyID}] Encerrando execução...");
+        rpcClient?.Dispose();
+        Console.WriteLine($"[{wavyID}] RabbitMQ resources cleaned up.");
+    }
+
+    static async Task<bool> EstabelecerHandshake()
+    {
+        if (rpcClient == null) return false;
+
+        try
+        {
+            var request = new RpcRequest
             {
-                Console.WriteLine("Arquivo de configuração não encontrado: " + configAgrPath);
-                return;
+                Type = "HANDSHAKE",
+                WavyId = wavyID
+            };
+
+            var response = await rpcClient.CallAsync(rpcQueueName, request, TimeSpan.FromSeconds(10));
+            
+            if (response.Status == "OK")
+            {
+                Console.WriteLine($"[{wavyID}] Handshake estabelecido: {response.Message}");
+                return true;
             }
-            var lines = File.ReadAllLines(configAgrPath);
-            foreach (var line in lines)
+            else
             {
-                // Ignora linha do header
-                if (line.StartsWith("id", StringComparison.OrdinalIgnoreCase)) continue;
-                var parts = line.Split(',');
-                if (parts.Length >= 2)
-                {
-                    var configID = parts[0].Trim();
-                    if (configID.StartsWith(wavyRegion + "_", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (int.TryParse(parts[1].Trim(), out aggregatorPort) && aggregatorPort > 0)
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-            if (aggregatorPort <= 0)
-            {
-                Console.WriteLine($"Configuração para agregador da região {wavyRegion} não encontrada ou porta inválida.");
-                return;
+                Console.WriteLine($"[{wavyID}] Falha no handshake: {response.Message}");
+                return false;
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Erro ao ler o arquivo de configuração do agregador: " + ex.Message);
-            return;
+            Console.WriteLine($"[{wavyID}] Erro durante handshake: {ex.Message}");
+            return false;
         }
+    }
 
-        Console.WriteLine($"[{wavyID}] Tentando conectar ao Agregador da região {wavyRegion} na porta {aggregatorPort}...");
+    static async Task EnviarDadosPeriodicamente()
+    {
+        var rnd = new Random();
+        int segundos = 0;
 
-        // Tenta estabelecer conexão com o Agregador
-        bool conectado = false;
-        while (!conectado)
+        while (!encerrarExecucao && rpcClient != null)
         {
             try
             {
-                using (var client = new TcpClient("127.0.0.1", aggregatorPort))
-                using (var stream = client.GetStream())
+                double temperatura = Math.Round(15 + rnd.NextDouble() * 10, 2);
+                
+                WavyMessage wavyMessage;
+                if (segundos % 2 == 0)
                 {
-                    // Send handshake initiation.
-                    var ligaBytes = Encoding.UTF8.GetBytes("Liga");
-                    stream.Write(ligaBytes, 0, ligaBytes.Length);
-
-                    var buffer = new byte[1024];
-                    int received = stream.Read(buffer, 0, buffer.Length);
-                    var response = Encoding.UTF8.GetString(buffer, 0, received);
-
-                    if (response == "OK")
+                    double umidade = rnd.Next(0, 100);
+                    wavyMessage = new WavyMessage
                     {
-                        // Send own ID.
-                        var idMsg = Encoding.UTF8.GetBytes("ID:" + wavyID);
-                        stream.Write(idMsg, 0, idMsg.Length);
-
-                        received = stream.Read(buffer, 0, buffer.Length);
-                        var response2 = Encoding.UTF8.GetString(buffer, 0, received);
-                        if (response2 == "ACK")
+                        WavyId = wavyID,
+                        Sensors = new[]
                         {
-                            conectado = true;
-                            Console.WriteLine($"[{wavyID}] Conexão estabelecida com o Agregador.");
-                        }
-                    }
+                            new SensorData { Type = "temperature", Value = temperatura },
+                            new SensorData { Type = "humidity", Value = umidade }
+                        },
+                        Timestamp = DateTime.Now.ToString("o")
+                    };
+                }
+                else
+                {
+                    wavyMessage = new WavyMessage
+                    {
+                        WavyId = wavyID,
+                        Sensors = new[]
+                        {
+                            new SensorData { Type = "temperature", Value = temperatura }
+                        },
+                        Timestamp = DateTime.Now.ToString("o")
+                    };
+                }
+
+                var request = new RpcRequest
+                {
+                    Type = "DATA",
+                    WavyId = wavyID,
+                    Data = JsonSerializer.Serialize(wavyMessage)
+                };
+
+                var response = await rpcClient.CallAsync(rpcQueueName, request, TimeSpan.FromSeconds(10));
+                
+                if (response.Status == "OK")
+                {
+                    Console.WriteLine($"[{wavyID}] Dados enviados com sucesso: {response.Message}");
+                    UpdateWavyLastSync(wavyID, DateTime.Now);
+                }
+                else
+                {
+                    Console.WriteLine($"[{wavyID}] Erro ao enviar dados: {response.Message}");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[{wavyID}] Erro ao conectar: {ex.Message}");
-                Thread.Sleep(1000);
+                Console.WriteLine($"[{wavyID}] Erro ao enviar dados: {ex.Message}");
+            }
+
+            await Task.Delay(1000);
+            segundos++;
+        }
+    }
+
+    static async Task MonitorarComandoDesligar()
+    {
+        while (!encerrarExecucao)
+        {
+            var comando = Console.ReadLine();
+            if (comando != null && comando.Trim().Equals("DLG", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"[{wavyID}] Terminando execução. Enviando pedido de desligamento...");
+                
+                if (rpcClient != null)
+                {
+                    try
+                    {
+                        var request = new RpcRequest
+                        {
+                            Type = "SHUTDOWN",
+                            WavyId = wavyID
+                        };
+
+                        var response = await rpcClient.CallAsync(rpcQueueName, request, TimeSpan.FromSeconds(10));
+                        Console.WriteLine($"[{wavyID}] Resposta do Agregador: {response.Message}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[{wavyID}] Erro ao enviar desligamento: {ex.Message}");
+                    }
+                }
+
+                encerrarExecucao = true;
+                break;
             }
         }
-
-        // Manda os dados periodicamente
-        Task.Run(() =>
-        {
-            var rnd = new Random();
-            int segundos = 0;
-            bool desligar = false;
-
-            // Verifica pelo comando para desligar numa thread em separado
-            Task.Run(() =>
-            {
-                while (!desligar)
-                {
-                    var comando = Console.ReadLine();
-                    if (comando != null && comando.Trim().Equals("DLG", StringComparison.OrdinalIgnoreCase))
-                    {
-                        desligar = true;
-                        Console.WriteLine($"[{wavyID}] Terminando execução. Enviando pedido de desligamento...");
-                        try
-                        {
-                            using (var client = new TcpClient("127.0.0.1", aggregatorPort))
-                            using (var stream = client.GetStream())
-                            {
-                                var msg = Encoding.UTF8.GetBytes("DLG");
-                                stream.Write(msg, 0, msg.Length);
-
-                                var buffer = new byte[1024];
-                                int received = stream.Read(buffer, 0, buffer.Length);
-                                var response = Encoding.UTF8.GetString(buffer, 0, received);
-                                Console.WriteLine($"[{wavyID}] Resposta do Agregador: {response}");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[{wavyID}] Erro ao enviar desligamento: {ex.Message}");
-                        }
-                    }
-                }
-            });
-
-            while (!desligar)
-            {
-                double temperatura = Math.Round(15 + rnd.NextDouble() * 10, 2);
-                string jsonData;
-
-                if (segundos % 2 == 0)
-                {
-                    double umidade = rnd.Next(0, 100);
-                    var sensors = new[]
-                    {
-                        new { type = "temperature", value = temperatura },
-                        new { type = "humidity", value = umidade }
-                    };
-                    jsonData = JsonSerializer.Serialize(new
-                    {
-                        wavy_id = wavyID,
-                        sensors,
-                        timestamp = DateTime.Now.ToString("o")
-                    });
-                }
-                else
-                {
-                    var sensors = new[]
-                    {
-                        new { type = "temperature", value = temperatura }
-                    };
-                    jsonData = JsonSerializer.Serialize(new
-                    {
-                        wavy_id = wavyID,
-                        sensors,
-                        timestamp = DateTime.Now.ToString("o")
-                    });
-                }
-
-                var mensagem = jsonData + "<|EOM|>";
-                var data = Encoding.UTF8.GetBytes(mensagem);
-
-                try
-                {
-                    using (var client = new TcpClient("127.0.0.1", aggregatorPort))
-                    using (var stream = client.GetStream())
-                    {
-                        stream.Write(data, 0, data.Length);
-                        var buffer = new byte[1024];
-                        int received = stream.Read(buffer, 0, buffer.Length);
-                        var response = Encoding.UTF8.GetString(buffer, 0, received);
-                        Console.WriteLine($"[{wavyID}] Resposta do Agregador: {response}");
-                        UpdateWavyLastSync(wavyID, DateTime.Now);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[{wavyID}] Erro ao enviar dados: {ex.Message}");
-                }
-
-                Thread.Sleep(1000);
-                segundos++;
-            }
-
-            Console.WriteLine($"[{wavyID}] Encerrando execução.");
-        }).Wait();
     }
 
     // Verifica se a wavy é configurada

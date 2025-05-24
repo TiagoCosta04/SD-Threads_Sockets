@@ -1,35 +1,29 @@
 ﻿using System.Collections.Concurrent;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using Shared.Models;
+using Shared.RabbitMQ;
 
 class Program
 {
     // Caminho para o ficheiro de Config
     static readonly string configAgrPath = Path.GetFullPath(
-    Path.Combine(
-        AppDomain.CurrentDomain.BaseDirectory,
-        "..", "..", "..", "..",     // sobe até à raiz do projecto
-        "Config",                   // desce para a pasta Config
-        "config_agr.csv"            // nome do ficheiro
-    )
-);
+        Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory,
+            "..", "..", "..", "..",     // sobe até à raiz do projecto
+            "Config",                   // desce para a pasta Config
+            "config_agr.csv"            // nome do ficheiro
+        )
+    );
 
-
-
-    static readonly ConcurrentQueue<string> dataQueue = new();
-    static TcpClient? serverClient;
-    static NetworkStream? serverStream;
+    static readonly ConcurrentQueue<WavyMessage> dataQueue = new();
+    static RabbitMQRpcServer? rpcServer;
+    static RabbitMQPublisher? publisher;
     static volatile bool encerrarExecucao = false;
 
     static string aggregatorID = "";
     static string aggregatorRegion = "";
-    static int aggregatorPort = 0;
-
-    static void Main()
+    static string rpcQueueName = "";    static async Task Main()
     {
         Console.Write("ID do Agregador: ");
         aggregatorID = Console.ReadLine()?.Trim() ?? "";
@@ -39,224 +33,216 @@ class Program
             return;
         }
         aggregatorRegion = aggregatorID.Split('_')[0];
+        rpcQueueName = RabbitMQConfig.RPC_QUEUE_PREFIX + aggregatorRegion;
 
-        // Lê o ficheiro de configuração para ver a port para este agregador
-        if (!File.Exists(configAgrPath))
+        // Verifica se o agregador está configurado
+        if (!IsAggregatorConfigured(aggregatorID))
         {
-            Console.WriteLine("Arquivo de configuração não encontrado: " + configAgrPath);
-            return;
-        }
-        try
-        {
-            var lines = File.ReadAllLines(configAgrPath);
-            foreach (var line in lines)
-            {
-                var parts = line.Split(',');
-                if (parts.Length >= 2 && parts[0].Trim().Equals(aggregatorID, StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!int.TryParse(parts[1].Trim(), out aggregatorPort) || aggregatorPort <= 0)
-                    {
-                        Console.WriteLine("Porta inválida configurada para " + aggregatorID);
-                        return;
-                    }
-                    break;
-                }
-            }
-            if (aggregatorPort <= 0)
-            {
-                Console.WriteLine($"Configuração para agregador {aggregatorID} não encontrada ou porta inválida.");
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Erro ao ler o arquivo de configuração: " + ex.Message);
+            Console.WriteLine($"Agregador {aggregatorID} não está configurado no arquivo de configuração.");
             return;
         }
 
-        Console.WriteLine($"[{aggregatorID}] Utilizando a porta {aggregatorPort} conforme arquivo de configuração.");
-        Console.WriteLine($"[{aggregatorID}] A estabelecer conexão com o Servidor...");
+        Console.WriteLine($"[{aggregatorID}] Inicializando RabbitMQ components...");
 
         try
         {
-            serverClient = new TcpClient("127.0.0.1", 11000);
-            serverStream = serverClient.GetStream();
-            Console.WriteLine($"[{aggregatorID}] Conexão estabelecida com o Servidor.");
+            // Initialize RabbitMQ Publisher for sending data to Server
+            publisher = new RabbitMQPublisher();
+            Console.WriteLine($"[{aggregatorID}] RabbitMQ Publisher configurado com sucesso.");
+
+            // Initialize RabbitMQ RPC Server for handling Wavy requests
+            rpcServer = new RabbitMQRpcServer(rpcQueueName, HandleRpcRequest);
+            rpcServer.Start();
+            Console.WriteLine($"[{aggregatorID}] RabbitMQ RPC Server iniciado na queue: {rpcQueueName}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[{aggregatorID}] Erro ao conectar ao Servidor: {ex.Message}");
+            Console.WriteLine($"[{aggregatorID}] Erro ao configurar RabbitMQ: {ex.Message}");
             return;
         }
 
-        var listener = new TcpListener(IPAddress.Any, aggregatorPort);
-        listener.Start();
-        Console.WriteLine($"[{aggregatorID}] A ouvir WAVYs na porta {aggregatorPort}...\n");
-
-        Task.Run(() =>
-        {
-            while (!encerrarExecucao)
-            {
-                try
-                {
-                    var wavyClient = listener.AcceptTcpClient();
-                    new Thread(() => HandleWavy(wavyClient)).Start();
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[{aggregatorID}] Erro ao aceitar conexão de WAVY: {ex.Message}");
-                }
-            }
-        });
+        Console.WriteLine($"[{aggregatorID}] Sistema iniciado com sucesso. A aguardar ligações de WAVYs...\n");
 
         // Processa dados e envia ao Servidor a cada 5 segundos
-        Task.Run(() => ProcessAndSendData());
+        var dataTask = Task.Run(async () => await ProcessAndSendData());
 
         // Monitorar comando de desligamento
-        Task.Run(() => MonitorarComandoDesligar());
+        var shutdownTask = Task.Run(async () => await MonitorarComandoDesligar());
 
-        // Mantém a main thread ativa até encerramento
-        while (!encerrarExecucao)
-        {
-            Thread.Sleep(200);
-        }
+        // Aguarda até que uma das tarefas complete
+        await Task.WhenAny(dataTask, shutdownTask);
 
         Console.WriteLine($"[{aggregatorID}] Encerrando execução...");
-        listener.Stop();
-
-        // Fecha a conexão com o Servidor
-        serverStream?.Close();
-        serverClient?.Close();
-        Console.WriteLine($"[{aggregatorID}] Conexão com o Servidor encerrada.");
-    }
-
-    static void HandleWavy(TcpClient wavyClient)
+        
+        // Cleanup resources
+        rpcServer?.Dispose();
+        publisher?.Dispose();
+        Console.WriteLine($"[{aggregatorID}] RabbitMQ resources cleaned up.");
+    }    static async Task<RpcResponse> HandleRpcRequest(RpcRequest request)
     {
-        using var stream = wavyClient.GetStream();
-        var buffer = new byte[4096];
-        var received = stream.Read(buffer, 0, buffer.Length);
-        var message = Encoding.UTF8.GetString(buffer, 0, received);
-
-        // Verifica handshake inicial
-        if (message.StartsWith("Liga"))
+        try
         {
-            // Envia "OK" para prosseguir com o handshake
-            var respostaLiga = Encoding.UTF8.GetBytes("OK");
-            stream.Write(respostaLiga, 0, respostaLiga.Length);
-
-            // Aguarda o ID enviado pela Wavy
-            received = stream.Read(buffer, 0, buffer.Length);
-            message = Encoding.UTF8.GetString(buffer, 0, received);
-            if (message.StartsWith("ID:"))
+            switch (request.Type?.ToUpper())
             {
-                var wavyID = message.Replace("ID:", "").Trim();
-                // Verifica se a região da Wavy corresponde à do Agregador.
-                if (!wavyID.Contains('_') || wavyID.Split('_')[0] != aggregatorRegion)
-                {
-                    Console.WriteLine($"[{aggregatorID}] Wavy de ID {wavyID} tem região incompatível e será rejeitada.");
-                    wavyClient.Close();
-                    return;
-                }
-                Console.WriteLine($"[{aggregatorID}] Conexão estabelecida com {wavyID}");
-                var ack = Encoding.UTF8.GetBytes("ACK");
-                stream.Write(ack, 0, ack.Length);
-            }
-            else
-            {
-                wavyClient.Close();
-                return;
+                case "HANDSHAKE":
+                    return HandleHandshake(request);
+                
+                case "DATA":
+                    return HandleDataRequest(request);
+                
+                case "SHUTDOWN":
+                    return HandleShutdownRequest(request);
+                
+                default:
+                    return new RpcResponse
+                    {
+                        Status = "ERROR",
+                        Message = "Tipo de request não reconhecido"
+                    };
             }
         }
-        else if (message.Trim().Equals("DLG"))
+        catch (Exception ex)
         {
-            Console.WriteLine($"[{aggregatorID}] Requisição de desligamento recebida da WAVY.");
-            var resposta = Encoding.UTF8.GetBytes("<|OK|>");
-            stream.Write(resposta, 0, resposta.Length);
-            wavyClient.Close();
-            return;
-        }
-        // Se for envio de dados
-        else if (!string.IsNullOrEmpty(message) && message.Contains("<|EOM|>"))
-        {
-            message = message.Replace("<|EOM|>", "");
-            try
+            Console.WriteLine($"[{aggregatorID}] Erro ao processar RPC request: {ex.Message}");
+            return new RpcResponse
             {
-                using var jsonDoc = JsonDocument.Parse(message);
-                var wavyId = jsonDoc.RootElement.GetProperty("wavy_id").GetString();
-                Console.WriteLine($"[{aggregatorID}] Dados recebidos de {wavyId}");
-            }
-            catch
-            {
-                Console.WriteLine($"[{aggregatorID}] Dados recebidos de uma mensagem não formatada em JSON.");
-            }
-
-            dataQueue.Enqueue(message);
-
-            var resposta = Encoding.UTF8.GetBytes("<|OK|>");
-            stream.Write(resposta, 0, resposta.Length);
+                Status = "ERROR",
+                Message = ex.Message
+            };
         }
-
-        wavyClient.Close();
     }
 
-    static void ProcessAndSendData()
+    static RpcResponse HandleHandshake(RpcRequest request)
+    {
+        var wavyId = request.WavyId ?? "";
+        
+        // Verifica se a região da Wavy corresponde à do Agregador
+        if (!wavyId.Contains('_') || wavyId.Split('_')[0] != aggregatorRegion)
+        {
+            Console.WriteLine($"[{aggregatorID}] Wavy {wavyId} tem região incompatível e será rejeitada.");
+            return new RpcResponse
+            {
+                Status = "ERROR",
+                Message = $"Região incompatível. Esperado: {aggregatorRegion}, Recebido: {wavyId.Split('_')[0]}"
+            };
+        }
+
+        Console.WriteLine($"[{aggregatorID}] Handshake estabelecido com {wavyId}");
+        return new RpcResponse
+        {
+            Status = "OK",
+            Message = $"Conexão estabelecida com {aggregatorID}"
+        };
+    }
+
+    static RpcResponse HandleDataRequest(RpcRequest request)
+    {
+        try
+        {
+            var wavyId = request.WavyId ?? "";
+            var data = request.Data ?? "";
+
+            if (string.IsNullOrEmpty(data))
+            {
+                return new RpcResponse
+                {
+                    Status = "ERROR",
+                    Message = "Dados não fornecidos"
+                };
+            }
+
+            // Parse the WavyMessage from JSON
+            var wavyMessage = JsonSerializer.Deserialize<WavyMessage>(data);
+            if (wavyMessage == null)
+            {
+                return new RpcResponse
+                {
+                    Status = "ERROR",
+                    Message = "Falha ao deserializar dados"
+                };
+            }
+
+            // Add aggregator ID to the message
+            wavyMessage.AgregadorId = aggregatorID;
+
+            // Add to processing queue
+            dataQueue.Enqueue(wavyMessage);
+
+            Console.WriteLine($"[{aggregatorID}] Dados recebidos de {wavyId} - {wavyMessage.Sensors.Length} sensores");
+            
+            return new RpcResponse
+            {
+                Status = "OK",
+                Message = "Dados recebidos com sucesso"
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{aggregatorID}] Erro ao processar dados: {ex.Message}");
+            return new RpcResponse
+            {
+                Status = "ERROR",
+                Message = $"Erro ao processar dados: {ex.Message}"
+            };
+        }
+    }
+
+    static RpcResponse HandleShutdownRequest(RpcRequest request)
+    {
+        var wavyId = request.WavyId ?? "";
+        Console.WriteLine($"[{aggregatorID}] Pedido de desligamento recebido de {wavyId}");
+        
+        return new RpcResponse
+        {
+            Status = "OK",
+            Message = $"Desligamento de {wavyId} reconhecido"
+        };
+    }    static async Task ProcessAndSendData()
     {
         while (!encerrarExecucao)
         {
-            Thread.Sleep(5000);
+            await Task.Delay(5000);
 
             if (!dataQueue.IsEmpty)
             {
-                var modifiedMessages = new List<string>();
+                var messages = new List<WavyMessage>();
 
-                while (dataQueue.TryDequeue(out var data))
+                // Collect all pending messages
+                while (dataQueue.TryDequeue(out var message))
                 {
-                    try
-                    {
-                        // Dá Parse em cada mensagem e insere o ID do Agregador
-                        var jsonNode = JsonNode.Parse(data);
-                        if (jsonNode is JsonObject obj)
-                        {
-                            obj["agregador_id"] = aggregatorID;
-                            modifiedMessages.Add(obj.ToJsonString());
-                        }
-                        else
-                        {
-                            modifiedMessages.Add(data);
-                        }
-                    }
-                    catch
-                    {
-                        modifiedMessages.Add(data); // caso falhe o parse, envia como está
-                    }
+                    messages.Add(message);
                 }
 
-                // Agrega todas as mensagens numa única mensagem.
-                var aggregatedMessage = string.Join("\n", modifiedMessages);
-                SendDataToServer(aggregatedMessage);
+                if (messages.Count > 0)
+                {
+                    // Create aggregated data
+                    var aggregatedData = new AggregatedData
+                    {
+                        AgregadorId = aggregatorID,
+                        Messages = messages,
+                        Timestamp = DateTime.Now.ToString("o")
+                    };
+
+                    // Send to server via RabbitMQ
+                    SendDataToServer(aggregatedData);
+                }
             }
         }
     }
 
-    static void SendDataToServer(string aggregatedData)
+    static void SendDataToServer(AggregatedData aggregatedData)
     {
-        if (serverStream == null || serverClient == null || !serverClient.Connected)
+        if (publisher == null)
         {
-            Console.WriteLine($"[{aggregatorID}] Conexão com o Servidor não está ativa.");
+            Console.WriteLine($"[{aggregatorID}] RabbitMQ Publisher não está disponível.");
             return;
         }
 
         try
         {
-            Console.WriteLine($"[{aggregatorID}] Enviando dados para o Servidor...");
-            var messageToSend = aggregatedData + "<|EOM|>";
-            var dadosBytes = Encoding.UTF8.GetBytes(messageToSend);
-            serverStream.Write(dadosBytes, 0, dadosBytes.Length);
-
-            var ackBuffer = new byte[1024];
-            var ackReceived = serverStream.Read(ackBuffer, 0, ackBuffer.Length);
-            var ack = Encoding.UTF8.GetString(ackBuffer, 0, ackReceived);
-            Console.WriteLine($"[{aggregatorID}] Resposta do Servidor: {ack}");
+            Console.WriteLine($"[{aggregatorID}] Enviando {aggregatedData.Messages.Count} mensagens para o Servidor via RabbitMQ...");
+            publisher.PublishData(aggregatedData);
+            Console.WriteLine($"[{aggregatorID}] Dados enviados com sucesso para o Servidor.");
         }
         catch (Exception ex)
         {
@@ -264,34 +250,55 @@ class Program
         }
     }
 
-    static void MonitorarComandoDesligar()
+    static async Task MonitorarComandoDesligar()
     {
         while (!encerrarExecucao)
         {
             var comando = Console.ReadLine();
-            if (comando != null && comando.Trim().Equals("DLG", System.StringComparison.OrdinalIgnoreCase))
+            if (comando != null && comando.Trim().Equals("DLG", StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine($"[{aggregatorID}] Encerrando execução... Aguardando resposta do Servidor...");
-                try
+                Console.WriteLine($"[{aggregatorID}] Comando de desligamento recebido...");
+                
+                // Send shutdown notification to server
+                if (publisher != null)
                 {
-                    if (serverStream != null && serverClient != null && serverClient.Connected)
+                    try
                     {
-                        var msg = Encoding.UTF8.GetBytes("Desliga");
-                        serverStream.Write(msg, 0, msg.Length);
-
-                        var ackBuffer = new byte[1024];
-                        var ackReceived = serverStream.Read(ackBuffer, 0, ackBuffer.Length);
-                        var ack = Encoding.UTF8.GetString(ackBuffer, 0, ackReceived);
-                        Console.WriteLine($"[{aggregatorID}] Resposta do Servidor: {ack}");
+                        publisher.PublishShutdown(aggregatorID);
+                        Console.WriteLine($"[{aggregatorID}] Notificação de shutdown enviada ao Servidor.");
                     }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[{aggregatorID}] Erro ao enviar desligamento ao Servidor: {ex.Message}");
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[{aggregatorID}] Erro ao enviar notificação de shutdown: {ex.Message}");
+                    }
                 }
 
                 encerrarExecucao = true;
+                break;
+            }
+
+            await Task.Delay(100);
+        }
+    }
+
+    static bool IsAggregatorConfigured(string aggregatorID)
+    {
+        try
+        {
+            if (!File.Exists(configAgrPath))
+                return false;
+            
+            var lines = File.ReadAllLines(configAgrPath);
+            foreach (var line in lines.Skip(1)) // Skip header
+            {
+                var parts = line.Split(',');
+                if (parts.Length >= 2 && parts[0].Trim().Equals(aggregatorID, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
             }
         }
+        catch { }
+        return false;
     }
 }
