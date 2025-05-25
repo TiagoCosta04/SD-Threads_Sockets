@@ -5,19 +5,40 @@ using System.Text.Json;
 using System.Threading;
 using Shared.Models;
 using Shared.RabbitMQ;
+using Shared.MongoDB;
 
 class Program
 {
     static readonly string basePath = Path.Combine(
-        Directory.GetParent(AppDomain.CurrentDomain.BaseDirectory)!.Parent!.Parent!.Parent!.FullName, "registos");
-
-    static readonly Dictionary<string, Mutex> fileMutexes = new();
+        Directory.GetParent(AppDomain.CurrentDomain.BaseDirectory)!.Parent!.Parent!.Parent!.FullName, "registos");    static readonly Dictionary<string, Mutex> fileMutexes = new();
     static RabbitMQSubscriber? subscriber;
-    static volatile bool encerrarExecucao = false;
-
-    static async Task Main()
+    static MongoDBService? mongoService;
+    static volatile bool encerrarExecucao = false;    static async Task Main()
     {
         Directory.CreateDirectory(basePath);
+        
+        // Initialize MongoDB
+        Console.WriteLine("[SERVIDOR] Inicializando MongoDB...");
+        try
+        {
+            mongoService = new MongoDBService();
+            var connectionTest = await mongoService.TestConnectionAsync();
+            if (!connectionTest)
+            {
+                Console.WriteLine("[SERVIDOR] Falha na conexão com MongoDB. Continuando apenas com arquivos locais.");
+                mongoService = null;
+            }
+            else
+            {
+                Console.WriteLine("[SERVIDOR] MongoDB conectado com sucesso!");
+                await mongoService.LogSystemEventAsync("SERVIDOR", "STARTUP", "Servidor iniciado com sucesso");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SERVIDOR] Erro ao conectar com MongoDB: {ex.Message}. Continuando apenas com arquivos locais.");
+            mongoService = null;
+        }
         
         Console.WriteLine("[SERVIDOR] Inicializando RabbitMQ Subscriber...");
 
@@ -47,14 +68,24 @@ class Program
         while (!encerrarExecucao)
         {
             await Task.Delay(200);
+        }        Console.WriteLine("[SERVIDOR] Encerrando execução...");
+        
+        // Log shutdown event
+        if (mongoService != null)
+        {
+            try
+            {
+                await mongoService.LogSystemEventAsync("SERVIDOR", "SHUTDOWN", "Servidor encerrando");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SERVIDOR] Erro ao logar shutdown no MongoDB: {ex.Message}");
+            }
         }
-
-        Console.WriteLine("[SERVIDOR] Encerrando execução...");
+        
         subscriber?.Dispose();
         Console.WriteLine("[SERVIDOR] RabbitMQ resources cleaned up.");
-    }
-
-    static void OnDataReceived(string message)
+    }    static async void OnDataReceived(string message)
     {
         try
         {
@@ -63,6 +94,26 @@ class Program
 
             Console.WriteLine($"[SERVIDOR] Dados recebidos de [{aggregatedData.AgregadorId}] - {aggregatedData.Messages.Count} mensagens");
 
+            // Save to MongoDB if available
+            if (mongoService != null)
+            {
+                try
+                {
+                    await mongoService.InsertAggregatedDataAsync(aggregatedData);
+                    
+                    // Also save individual wavy messages
+                    foreach (var wavyMessage in aggregatedData.Messages)
+                    {
+                        await mongoService.InsertWavyMessageAsync(wavyMessage);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SERVIDOR] Erro ao salvar no MongoDB: {ex.Message}");
+                }
+            }
+
+            // Continue saving to local files (backup)
             foreach (var wavyMessage in aggregatedData.Messages)
             {
                 try
